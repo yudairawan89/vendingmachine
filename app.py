@@ -25,7 +25,7 @@ scaler = joblib.load("scaler.pkl")
 le = joblib.load("label_encoder.pkl")
 feature_names = joblib.load("feature_names.pkl")
 
-# Link Google Sheets (gunakan CSV export)
+# Link Google Sheets
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1AvzsaiDZqQ_0tR7S3_OYCqwIeTIz3GQ27ptvT4GWk6A/export?format=csv"
 
 
@@ -139,47 +139,45 @@ with tab2:
 
 
 # -------------------------------
-# Tab 3: Prediksi Besok
+# Tab 3: Prediksi Besok (Input Manual Hari Ini)
 # -------------------------------
 with tab3:
-    st.subheader("Prediksi Penjualan Besok untuk Setiap SKU")
+    st.subheader("Prediksi Penjualan Besok untuk Setiap SKU (Input Manual Hari Ini)")
 
-    try:
-        df = pd.read_csv(SHEET_URL)
-        df = df.dropna(subset=["timestamp"])
+    st.write("Silakan masukkan data penjualan **hari ini** untuk setiap SKU:")
 
-        # Parsing timestamp (ubah titik ke :)
-        df["timestamp"] = pd.to_datetime(
-            df["timestamp"].astype(str).str.replace(".", ":", regex=False),
-            errors="coerce", infer_datetime_format=True
-        )
-        df = df.dropna(subset=["timestamp"])
+    # Input tabel untuk semua SKU
+    input_today = {}
+    for sku in le.classes_:
+        col1, col2 = st.columns(2)
+        with col1:
+            price = st.number_input(f"Harga {sku}", min_value=1000, max_value=20000, value=10000, step=500, key=f"price_{sku}")
+        with col2:
+            sold = st.number_input(f"Penjualan Hari Ini {sku}", min_value=0, max_value=100, value=1, step=1, key=f"sold_{sku}")
+        input_today[sku] = {"price": price, "sold": sold}
 
-        if df.empty:
-            st.warning("⚠️ Tidak ada data valid untuk prediksi besok.")
-        else:
-            latest = df.sort_values("timestamp").iloc[-1]
+    if st.button("Prediksi Besok"):
+        besok_preds = []
+        # Asumsi besok = hari ini + 1
+        today = pd.Timestamp.today()
+        besok_day = (today.dayofweek + 1) % 7
+        is_weekend = 1 if besok_day >= 5 else 0
 
-            # Tentukan hari besok
-            besok_day = (latest["timestamp"].dayofweek + 1) % 7
-            is_weekend = 1 if besok_day >= 5 else 0
-
-            # Prediksi semua SKU
-            besok_preds = []
-            for sku in le.classes_:
+        for sku, val in input_today.items():
+            try:
                 sku_encoded = le.transform([sku])[0]
-                feat = pd.DataFrame([{
-                    "avg_price": latest["price"],  # asumsi harga sama dengan terakhir
-                    "day_of_week": besok_day,
-                    "is_weekend": is_weekend,
-                    "sku_encoded": sku_encoded
-                }], columns=feature_names)
-                feat = feat.fillna(0)
+            except:
+                sku_encoded = 0
 
-                yhat = predict_sales(feat)
-                besok_preds.append({"SKU": sku, "Prediksi Besok": round(yhat[0], 2)})
+            feat = pd.DataFrame([{
+                "avg_price": val["price"],
+                "day_of_week": besok_day,
+                "is_weekend": is_weekend,
+                "sku_encoded": sku_encoded
+            }], columns=feature_names)
+            feat = feat.fillna(0)
 
-            st.dataframe(pd.DataFrame(besok_preds))
+            yhat = predict_sales(feat)
+            besok_preds.append({"SKU": sku, "Prediksi Besok": round(yhat[0], 2)})
 
-    except Exception as e:
-        st.error(f"Gagal menghitung prediksi besok: {e}")
+        st.dataframe(pd.DataFrame(besok_preds))
