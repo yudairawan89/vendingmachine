@@ -19,10 +19,10 @@ rf = joblib.load("RandomForest_model.pkl")
 svm = joblib.load("SVM_model.pkl")
 xgb = joblib.load("XGBoost_model.pkl")
 
-# Load meta LSTM
+# Load meta LSTM (tanpa compile)
 lstm_meta = tf.keras.models.load_model("stacking_lstm_meta.h5", compile=False)
 
-# Load scaler & LabelEncoder
+# Load scaler & encoder
 scaler = joblib.load("scaler.pkl")
 le = joblib.load("label_encoder.pkl")
 
@@ -49,46 +49,7 @@ def predict_sales(input_df):
 
 
 # ======================================
-# === STEP 3: Preprocessing ===
-# ======================================
-def preprocess_data(df):
-    df['date'] = pd.to_datetime(df['timestamp']).dt.date
-    daily_sales = df.groupby(['date', 'sku']).agg(
-        total_sold=('sold', 'sum'),
-        avg_price=('price', 'mean')
-    ).reset_index()
-
-    daily_sales['date'] = pd.to_datetime(daily_sales['date'])
-    daily_sales['day_of_week'] = daily_sales['date'].dt.dayofweek
-    daily_sales['is_weekend'] = (daily_sales['day_of_week'] >= 5).astype(int)
-    daily_sales = daily_sales.sort_values(['sku', 'date'])
-
-    for lag in [1, 2, 3, 7, 14]:
-        daily_sales[f'lag_{lag}'] = daily_sales.groupby('sku')['total_sold'].shift(lag)
-
-    for win in [3, 7, 14]:
-        daily_sales[f'rolling_mean_{win}'] = (
-            daily_sales.groupby('sku')['total_sold']
-            .shift(1).rolling(window=win, min_periods=1).mean()
-        )
-        daily_sales[f'rolling_std_{win}'] = (
-            daily_sales.groupby('sku')['total_sold']
-            .shift(1).rolling(window=win, min_periods=1).std()
-        )
-
-    daily_sales['total_demand_day'] = daily_sales.groupby('date')['total_sold'].transform('sum')
-    daily_sales['sku_share'] = daily_sales['total_sold'] / (daily_sales['total_demand_day'] + 1e-5)
-    daily_sales['sku_encoded'] = le.transform(daily_sales['sku'])
-
-    return daily_sales
-
-
-def prepare_features(row):
-    return pd.DataFrame([row.drop(labels=['date', 'sku', 'total_sold'])])
-
-
-# ======================================
-# === STEP 4: Streamlit GUI ===
+# === STEP 3: Streamlit GUI ===
 # ======================================
 st.set_page_config(page_title="Vending Machine Prediction", layout="wide")
 st.title("🤖 Vending Machine Monitoring & Prediction")
@@ -104,32 +65,36 @@ with tab1:
     try:
         df = pd.read_csv(SHEET_URL)
 
-        if df.empty:
-            st.warning("⚠️ Google Sheet kosong, belum ada data masuk.")
+        # Parsing timestamp manual (format pakai titik di jam)
+        df["timestamp"] = pd.to_datetime(df["timestamp"], format="%Y-%m-%d %H.%M.%S", errors="coerce")
+
+        if df["timestamp"].isnull().all():
+            st.warning("⚠️ Data ada, tapi kolom timestamp kosong/tidak valid.")
         else:
-            df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
-            df = df.dropna(subset=['timestamp'])
+            latest = df.sort_values("timestamp").iloc[-1]
 
-            if df.empty:
-                st.warning("⚠️ Data ada, tapi kolom timestamp kosong/tidak valid.")
-            else:
-                latest = df.sort_values("timestamp").iloc[-1]
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Suhu (°C)", f"{latest['temperature_c']}")
+            col2.metric("Kelembaban (%)", f"{latest['humidity']}")
+            col3.metric("SKU", latest['sku'])
 
-                col1, col2, col3 = st.columns(3)
-                col1.metric("🌡️ Suhu (°C)", f"{latest['temperature_c']}")
-                col2.metric("💧 Kelembaban (%)", f"{latest['humidity']}")
-                col3.metric("🥤 SKU", latest['sku'])
+            st.dataframe(df.tail(10))
 
-                st.dataframe(df.tail(10))
+            # Mapping SKU pakai LabelEncoder
+            try:
+                sku_encoded = le.transform([latest["sku"]])[0]
+            except:
+                sku_encoded = 0  # default kalau SKU tidak dikenal
 
-                processed = preprocess_data(df)
-                if processed.dropna().empty:
-                    st.warning("⚠️ Data tidak cukup untuk preprocessing (lag/rolling).")
-                else:
-                    latest_processed = processed.dropna().iloc[-1]
-                    features = prepare_features(latest_processed)
-                    pred = predict_sales(features)
-                    st.success(f"🔮 Prediksi Penjualan SKU {latest['sku']}: {pred[0]:.2f} unit")
+            features = pd.DataFrame([{
+                "avg_price": latest["price"],
+                "day_of_week": latest["timestamp"].dayofweek,
+                "is_weekend": 1 if latest["timestamp"].dayofweek >= 5 else 0,
+                "sku_encoded": sku_encoded
+            }])
+
+            pred = predict_sales(features)
+            st.success(f"🔮 Prediksi Penjualan: {pred[0]:.2f} unit")
 
     except Exception as e:
         st.error(f"Gagal mengambil data Google Sheet: {e}")
@@ -144,14 +109,13 @@ with tab2:
     sku = st.text_input("SKU (nama produk)", "Nescafe")
     avg_price = st.number_input("Harga Rata-rata", min_value=1000, max_value=20000, value=10000, step=500)
     day_of_week = st.selectbox("Hari ke-", list(range(7)),
-                               format_func=lambda x: ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"][x])
+                               format_func=lambda x: ["Senin","Selasa","Rabu","Kamis","Jumat","Sabtu","Minggu"][x])
     is_weekend = 1 if day_of_week >= 5 else 0
 
     try:
         sku_encoded = le.transform([sku])[0]
     except:
         sku_encoded = 0
-        st.warning(f"SKU '{sku}' tidak ada di encoder, diset ke 0.")
 
     if st.button("Prediksi Penjualan"):
         input_manual = pd.DataFrame([{
