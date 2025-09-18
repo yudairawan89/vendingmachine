@@ -1,5 +1,5 @@
 # ======================================
-# === app.py: Vending Machine GUI ===
+# === app.py: Vending Machine GUI Final ===
 # ======================================
 
 import streamlit as st
@@ -7,10 +7,9 @@ import pandas as pd
 import numpy as np
 import joblib
 import tensorflow as tf
-from sklearn.preprocessing import StandardScaler
 
 # ======================================
-# === STEP 1: Konfigurasi & Load Model ===
+# === STEP 1: Load Models & Config ===
 # ======================================
 
 # Load base models
@@ -18,10 +17,10 @@ rf = joblib.load("RandomForest_model.pkl")
 svm = joblib.load("SVM_model.pkl")
 xgb = joblib.load("XGBoost_model.pkl")
 
-# Load meta LSTM (tanpa compile)
+# Load meta LSTM
 lstm_meta = tf.keras.models.load_model("stacking_lstm_meta.h5", compile=False)
 
-# Load scaler & encoder & feature names
+# Load scaler, label encoder, dan feature_names
 scaler = joblib.load("scaler.pkl")
 le = joblib.load("label_encoder.pkl")
 feature_names = joblib.load("feature_names.pkl")
@@ -34,10 +33,16 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/1AvzsaiDZqQ_0tR7S3_OYCqwIeTI
 # === STEP 2: Fungsi Prediksi ===
 # ======================================
 def predict_sales(input_df):
-    # Pastikan kolom sama urutannya
+    # Pastikan urutan kolom sesuai
     input_df = input_df.reindex(columns=feature_names, fill_value=0)
 
+    # Isi NaN dengan 0 biar stabil
+    input_df = input_df.fillna(0)
+
+    # Scaling
     X_scaled = scaler.transform(input_df)
+
+    # Base model predictions
     base_preds = [
         rf.predict(X_scaled).reshape(-1, 1),
         svm.predict(X_scaled).reshape(-1, 1),
@@ -46,6 +51,7 @@ def predict_sales(input_df):
     meta_X = np.hstack(base_preds)
     meta_X_lstm = meta_X.reshape((meta_X.shape[0], 1, meta_X.shape[1]))
 
+    # Meta prediction
     y_pred = lstm_meta.predict(meta_X_lstm, verbose=0)
     return y_pred.flatten()
 
@@ -56,8 +62,7 @@ def predict_sales(input_df):
 st.set_page_config(page_title="Vending Machine Prediction", layout="wide")
 st.title("🤖 Vending Machine Monitoring & Prediction")
 
-tab1, tab2, tab3 = st.tabs(["📡 Monitoring", "📝 Manual Input", "📅 Input Hari Ini → Prediksi Besok"])
-
+tab1, tab2, tab3 = st.tabs(["📡 Monitoring", "📝 Manual Input", "🔮 Prediksi Besok"])
 
 # -------------------------------
 # Tab 1: Monitoring
@@ -68,18 +73,18 @@ with tab1:
     try:
         df = pd.read_csv(SHEET_URL)
 
-        # Parsing timestamp (ada yg pakai titik di jam)
-        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce", dayfirst=False)
+        # Parsing timestamp
+        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
 
         if df["timestamp"].isnull().all():
             st.warning("⚠️ Data ada, tapi kolom timestamp kosong/tidak valid.")
         else:
             latest = df.sort_values("timestamp").iloc[-1]
 
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Suhu (°C)", f"{latest['temperature_c']}")
-            col2.metric("Kelembaban (%)", f"{latest['humidity']}")
-            col3.metric("SKU", latest['sku'])
+            # Tampilkan info dasar (tanpa suhu & kelembaban)
+            col1, col2 = st.columns(2)
+            col1.metric("SKU", latest['sku'])
+            col2.metric("Harga", f"{latest['price']}")
 
             st.dataframe(df.tail(10))
 
@@ -97,7 +102,23 @@ with tab1:
             }])
 
             pred = predict_sales(features)
-            st.success(f"🔮 Prediksi Penjualan: {pred[0]:.2f} unit")
+            st.success(f"🔮 Prediksi Penjualan Hari Ini untuk {latest['sku']}: {pred[0]:.2f} unit")
+
+            # Prediksi semua SKU
+            st.markdown("### 🤯 Prediksi Penjualan Harian Semua SKU")
+            all_preds = []
+            for sku in le.classes_:
+                sku_encoded = le.transform([sku])[0]
+                feat = pd.DataFrame([{
+                    "avg_price": latest["price"],
+                    "day_of_week": latest["timestamp"].dayofweek,
+                    "is_weekend": 1 if latest["timestamp"].dayofweek >= 5 else 0,
+                    "sku_encoded": sku_encoded
+                }])
+                yhat = predict_sales(feat)
+                all_preds.append({"SKU": sku, "Prediksi Penjualan": round(yhat[0], 2)})
+
+            st.dataframe(pd.DataFrame(all_preds))
 
     except Exception as e:
         st.error(f"Gagal mengambil data Google Sheet: {e}")
@@ -128,55 +149,43 @@ with tab2:
             "sku_encoded": sku_encoded
         }])
         pred = predict_sales(input_manual)
-        st.success(f"🔮 Prediksi Penjualan (Manual): {pred[0]:.2f} unit")
+        st.success(f"🔮 Prediksi Penjualan (Manual) untuk {sku}: {pred[0]:.2f} unit")
 
 
 # -------------------------------
-# Tab 3: Input Hari Ini → Prediksi Besok
+# Tab 3: Prediksi Besok
 # -------------------------------
 with tab3:
-    st.subheader("Input Data Hari Ini untuk Prediksi Besok")
+    st.subheader("Prediksi Penjualan Besok untuk Setiap SKU")
 
-    today = st.date_input("Tanggal Hari Ini")
-    sku = st.selectbox("SKU Hari Ini", le.classes_)
-    price = st.number_input("Harga Hari Ini", min_value=1000, max_value=20000, value=10000)
-    sold = st.number_input("Jumlah Terjual Hari Ini", min_value=0, max_value=500, value=10)
-    temp = st.number_input("Suhu (°C)", min_value=0.0, max_value=50.0, value=25.0, step=0.1)
-    hum = st.number_input("Kelembaban (%)", min_value=0.0, max_value=100.0, value=60.0, step=0.1)
-
-    if st.button("Prediksi Besok"):
-        # Ambil data historis
+    try:
         df = pd.read_csv(SHEET_URL)
         df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
 
-        # Tambah data hari ini
-        new_row = {
-            "timestamp": pd.to_datetime(today),
-            "sku": sku,
-            "price": price,
-            "sold": sold,
-            "temperature_c": temp,
-            "humidity": hum
-        }
-        df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+        if df.empty or df["timestamp"].isnull().all():
+            st.warning("⚠️ Tidak ada data valid untuk prediksi besok.")
+        else:
+            latest = df.sort_values("timestamp").iloc[-1]
 
-        # Urutkan & buat fitur tambahan
-        df = df.sort_values(["sku","timestamp"])
-        for lag in [1,2,3,7,14]:
-            df[f"lag_{lag}"] = df.groupby("sku")["sold"].shift(lag)
-        for win in [3,7,14]:
-            df[f"rolling_mean_{win}"] = df.groupby("sku")["sold"].shift(1).rolling(window=win, min_periods=1).mean()
-            df[f"rolling_std_{win}"] = df.groupby("sku")["sold"].shift(1).rolling(window=win, min_periods=1).std()
+            # Prediksi untuk semua SKU (besok)
+            besok_preds = []
+            besok_day = latest["timestamp"].dayofweek + 1
+            if besok_day > 6:
+                besok_day = 0
+            is_weekend = 1 if besok_day >= 5 else 0
 
-        df["day_of_week"] = df["timestamp"].dt.dayofweek
-        df["is_weekend"] = (df["day_of_week"]>=5).astype(int)
-        df["total_demand_day"] = df.groupby("timestamp")["sold"].transform("sum")
-        df["sku_share"] = df["sold"] / (df["total_demand_day"]+1e-5)
-        df["sku_encoded"] = le.transform(df["sku"])
+            for sku in le.classes_:
+                sku_encoded = le.transform([sku])[0]
+                feat = pd.DataFrame([{
+                    "avg_price": latest["price"],
+                    "day_of_week": besok_day,
+                    "is_weekend": is_weekend,
+                    "sku_encoded": sku_encoded
+                }])
+                yhat = predict_sales(feat)
+                besok_preds.append({"SKU": sku, "Prediksi Besok": round(yhat[0], 2)})
 
-        # Ambil row terakhir utk prediksi besok
-        latest_features = df.drop(columns=["timestamp","sku","sold"]).iloc[-1:]
-        latest_features = latest_features.reindex(columns=feature_names, fill_value=0)
+            st.dataframe(pd.DataFrame(besok_preds))
 
-        pred = predict_sales(latest_features)
-        st.success(f"🔮 Prediksi Penjualan Besok untuk {sku}: {pred[0]:.2f} unit")
+    except Exception as e:
+        st.error(f"Gagal menghitung prediksi besok: {e}")
