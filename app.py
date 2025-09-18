@@ -126,3 +126,4 @@ with tab2:
         }])
         pred = predict_sales(input_manual)
         st.success(f"🔮 Prediksi Penjualan (Manual): {pred[0]:.2f} unit")
+
