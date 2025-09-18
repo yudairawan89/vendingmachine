@@ -23,7 +23,7 @@ xgb = joblib.load("XGBoost_model.pkl")
 lstm_meta = tf.keras.models.load_model("stacking_lstm_meta.h5", compile=False)
 
 # Load scaler
-scaler = joblib.load("saved_models/scaler.pkl")  # pastikan scaler disave saat training
+scaler = joblib.load("scaler.pkl")  # pastikan scaler disave saat training
 
 # Link Google Sheets (gunakan CSV export)
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1AvzsaiDZqQ_0tR7S3_OYCqwIeTIz3GQ27ptvT4GWk6A/export?format=csv"
@@ -114,3 +114,4 @@ with tab2:
         }])
         pred = predict_sales(input_manual)
         st.success(f"🔮 Prediksi Penjualan (Manual): {pred[0]:.2f} unit")
+
