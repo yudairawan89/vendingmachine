@@ -13,12 +13,12 @@ import matplotlib.pyplot as plt
 # ======================================
 
 # Load base models
-rf = joblib.load("saved_models/RandomForest_model.pkl")
-svm = joblib.load("saved_models/SVM_model.pkl")
-xgb = joblib.load("saved_models/XGBoost_model.pkl")
+rf = joblib.load("RandomForest_model.pkl")
+svm = joblib.load("SVM_model.pkl")
+xgb = joblib.load("XGBoost_model.pkl")
 
 # Load meta LSTM
-lstm_meta = tf.keras.models.load_model("saved_models/stacking_lstm_meta.h5")
+lstm_meta = tf.keras.models.load_model("stacking_lstm_meta.h5")
 
 # Load scaler
 scaler = joblib.load("saved_models/scaler.pkl")  # pastikan Anda sudah save scaler saat training
@@ -111,3 +111,4 @@ with tab2:
         }])
         pred = predict_sales(input_manual)
         st.success(f"🔮 Prediksi Penjualan (Manual): {pred[0]:.2f} unit")
+
