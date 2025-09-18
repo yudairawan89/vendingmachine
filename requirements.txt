@@ -1,6 +1,11 @@
 streamlit
 pandas
-joblib
+numpy
 scikit-learn
+joblib
 xgboost
-streamlit-autorefresh
+tensorflow
+matplotlib
+seaborn
+gspread
+oauth2client
