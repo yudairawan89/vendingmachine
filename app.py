@@ -1,14 +1,12 @@
-# ======================================
-# === app.py: Vending Machine GUI ===
-# ======================================
+# ===============================================
+# === app.py: Vending Machine GUI (Final) ===
+# ===============================================
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import joblib
 import tensorflow as tf
-from sklearn.preprocessing import StandardScaler
-import matplotlib.pyplot as plt
 
 # ======================================
 # === STEP 1: Konfigurasi & Load Model ===
@@ -19,14 +17,15 @@ rf = joblib.load("RandomForest_model.pkl")
 svm = joblib.load("SVM_model.pkl")
 xgb = joblib.load("XGBoost_model.pkl")
 
-# Load meta LSTM (tanpa compile)
+# Load meta LSTM
 lstm_meta = tf.keras.models.load_model("stacking_lstm_meta.h5", compile=False)
 
-# Load scaler & encoder
+# Load scaler, encoder, dan feature names
 scaler = joblib.load("scaler.pkl")
 le = joblib.load("label_encoder.pkl")
+feature_names = joblib.load("feature_names.pkl")
 
-# Link Google Sheets (gunakan CSV export)
+# Link Google Sheets (CSV export)
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1AvzsaiDZqQ_0tR7S3_OYCqwIeTIz3GQ27ptvT4GWk6A/export?format=csv"
 
 
@@ -34,8 +33,13 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/1AvzsaiDZqQ_0tR7S3_OYCqwIeTI
 # === STEP 2: Fungsi Prediksi ===
 # ======================================
 def predict_sales(input_df):
+    # Pastikan urutan kolom sesuai training
+    input_df = input_df.reindex(columns=feature_names, fill_value=0)
+
+    # Scaling
     X_scaled = scaler.transform(input_df)
 
+    # Prediksi base models
     base_preds = [
         rf.predict(X_scaled).reshape(-1, 1),
         svm.predict(X_scaled).reshape(-1, 1),
@@ -44,6 +48,7 @@ def predict_sales(input_df):
     meta_X = np.hstack(base_preds)
     meta_X_lstm = meta_X.reshape((meta_X.shape[0], 1, meta_X.shape[1]))
 
+    # Meta LSTM prediction
     y_pred = lstm_meta.predict(meta_X_lstm, verbose=0)
     return y_pred.flatten()
 
@@ -65,14 +70,15 @@ with tab1:
     try:
         df = pd.read_csv(SHEET_URL)
 
-        # Parsing timestamp manual (format pakai titik di jam)
+        # Parsing timestamp (format pakai titik di jam)
         df["timestamp"] = pd.to_datetime(df["timestamp"], format="%Y-%m-%d %H.%M.%S", errors="coerce")
 
-        if df["timestamp"].isnull().all():
+        if df.empty or df["timestamp"].isnull().all():
             st.warning("⚠️ Data ada, tapi kolom timestamp kosong/tidak valid.")
         else:
             latest = df.sort_values("timestamp").iloc[-1]
 
+            # Monitoring suhu, kelembaban, SKU terakhir
             col1, col2, col3 = st.columns(3)
             col1.metric("Suhu (°C)", f"{latest['temperature_c']}")
             col2.metric("Kelembaban (%)", f"{latest['humidity']}")
@@ -80,12 +86,13 @@ with tab1:
 
             st.dataframe(df.tail(10))
 
-            # Mapping SKU pakai LabelEncoder
+            # Mapping SKU ke encoded value
             try:
                 sku_encoded = le.transform([latest["sku"]])[0]
             except:
-                sku_encoded = 0  # default kalau SKU tidak dikenal
+                sku_encoded = 0  # default kalau SKU baru/tidak dikenal
 
+            # Buat fitur sesuai training
             features = pd.DataFrame([{
                 "avg_price": latest["price"],
                 "day_of_week": latest["timestamp"].dayofweek,
@@ -126,4 +133,3 @@ with tab2:
         }])
         pred = predict_sales(input_manual)
         st.success(f"🔮 Prediksi Penjualan (Manual): {pred[0]:.2f} unit")
-
