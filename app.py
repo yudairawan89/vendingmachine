@@ -1,5 +1,5 @@
 # ======================================
-# === app.py: Vending Machine GUI Final ===
+# === app.py: Vending Machine GUI ===
 # ======================================
 
 import streamlit as st
@@ -9,7 +9,7 @@ import joblib
 import tensorflow as tf
 
 # ======================================
-# === STEP 1: Load Models & Config ===
+# === STEP 1: Konfigurasi & Load Model ===
 # ======================================
 
 # Load base models
@@ -17,10 +17,10 @@ rf = joblib.load("RandomForest_model.pkl")
 svm = joblib.load("SVM_model.pkl")
 xgb = joblib.load("XGBoost_model.pkl")
 
-# Load meta LSTM
+# Load meta LSTM (tanpa compile)
 lstm_meta = tf.keras.models.load_model("stacking_lstm_meta.h5", compile=False)
 
-# Load scaler, label encoder, dan feature_names
+# Load scaler, encoder, dan feature names
 scaler = joblib.load("scaler.pkl")
 le = joblib.load("label_encoder.pkl")
 feature_names = joblib.load("feature_names.pkl")
@@ -33,11 +33,9 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/1AvzsaiDZqQ_0tR7S3_OYCqwIeTI
 # === STEP 2: Fungsi Prediksi ===
 # ======================================
 def predict_sales(input_df):
-    # Pastikan urutan kolom sesuai
+    """Prediksi menggunakan base model + meta LSTM"""
+    # Pastikan urutan kolom sesuai feature_names
     input_df = input_df.reindex(columns=feature_names, fill_value=0)
-
-    # Isi NaN dengan 0 biar stabil
-    input_df = input_df.fillna(0)
 
     # Scaling
     X_scaled = scaler.transform(input_df)
@@ -72,19 +70,23 @@ with tab1:
 
     try:
         df = pd.read_csv(SHEET_URL)
+        df = df.dropna(subset=["timestamp"])
 
-        # Parsing timestamp
-        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+        # Parsing timestamp (ubah titik ke :)
+        df["timestamp"] = pd.to_datetime(
+            df["timestamp"].astype(str).str.replace(".", ":", regex=False),
+            errors="coerce", infer_datetime_format=True
+        )
+        df = df.dropna(subset=["timestamp"])
 
-        if df["timestamp"].isnull().all():
-            st.warning("⚠️ Data ada, tapi kolom timestamp kosong/tidak valid.")
+        if df.empty:
+            st.warning("⚠️ Tidak ada data valid.")
         else:
             latest = df.sort_values("timestamp").iloc[-1]
 
-            # Tampilkan info dasar (tanpa suhu & kelembaban)
             col1, col2 = st.columns(2)
-            col1.metric("SKU", latest['sku'])
-            col2.metric("Harga", f"{latest['price']}")
+            col1.metric("SKU", latest["sku"])
+            col2.metric("Sold (unit)", latest["sold"])
 
             st.dataframe(df.tail(10))
 
@@ -102,23 +104,7 @@ with tab1:
             }])
 
             pred = predict_sales(features)
-            st.success(f"🔮 Prediksi Penjualan Hari Ini untuk {latest['sku']}: {pred[0]:.2f} unit")
-
-            # Prediksi semua SKU
-            st.markdown("### 🤯 Prediksi Penjualan Harian Semua SKU")
-            all_preds = []
-            for sku in le.classes_:
-                sku_encoded = le.transform([sku])[0]
-                feat = pd.DataFrame([{
-                    "avg_price": latest["price"],
-                    "day_of_week": latest["timestamp"].dayofweek,
-                    "is_weekend": 1 if latest["timestamp"].dayofweek >= 5 else 0,
-                    "sku_encoded": sku_encoded
-                }])
-                yhat = predict_sales(feat)
-                all_preds.append({"SKU": sku, "Prediksi Penjualan": round(yhat[0], 2)})
-
-            st.dataframe(pd.DataFrame(all_preds))
+            st.success(f"🔮 Prediksi Penjualan Hari Ini (SKU {latest['sku']}): {pred[0]:.2f} unit")
 
     except Exception as e:
         st.error(f"Gagal mengambil data Google Sheet: {e}")
@@ -133,7 +119,7 @@ with tab2:
     sku = st.text_input("SKU (nama produk)", "Nescafe")
     avg_price = st.number_input("Harga Rata-rata", min_value=1000, max_value=20000, value=10000, step=500)
     day_of_week = st.selectbox("Hari ke-", list(range(7)),
-                               format_func=lambda x: ["Senin","Selasa","Rabu","Kamis","Jumat","Sabtu","Minggu"][x])
+                               format_func=lambda x: ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"][x])
     is_weekend = 1 if day_of_week >= 5 else 0
 
     try:
@@ -141,7 +127,7 @@ with tab2:
     except:
         sku_encoded = 0
 
-    if st.button("Prediksi Penjualan (Manual)"):
+    if st.button("Prediksi Penjualan Manual"):
         input_manual = pd.DataFrame([{
             "avg_price": avg_price,
             "day_of_week": day_of_week,
@@ -149,7 +135,7 @@ with tab2:
             "sku_encoded": sku_encoded
         }])
         pred = predict_sales(input_manual)
-        st.success(f"🔮 Prediksi Penjualan (Manual) untuk {sku}: {pred[0]:.2f} unit")
+        st.success(f"🔮 Prediksi Penjualan (Manual, {sku}): {pred[0]:.2f} unit")
 
 
 # -------------------------------
@@ -160,28 +146,36 @@ with tab3:
 
     try:
         df = pd.read_csv(SHEET_URL)
-        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+        df = df.dropna(subset=["timestamp"])
 
-        if df.empty or df["timestamp"].isnull().all():
+        # Parsing timestamp (ubah titik ke :)
+        df["timestamp"] = pd.to_datetime(
+            df["timestamp"].astype(str).str.replace(".", ":", regex=False),
+            errors="coerce", infer_datetime_format=True
+        )
+        df = df.dropna(subset=["timestamp"])
+
+        if df.empty:
             st.warning("⚠️ Tidak ada data valid untuk prediksi besok.")
         else:
             latest = df.sort_values("timestamp").iloc[-1]
 
-            # Prediksi untuk semua SKU (besok)
-            besok_preds = []
-            besok_day = latest["timestamp"].dayofweek + 1
-            if besok_day > 6:
-                besok_day = 0
+            # Tentukan hari besok
+            besok_day = (latest["timestamp"].dayofweek + 1) % 7
             is_weekend = 1 if besok_day >= 5 else 0
 
+            # Prediksi semua SKU
+            besok_preds = []
             for sku in le.classes_:
                 sku_encoded = le.transform([sku])[0]
                 feat = pd.DataFrame([{
-                    "avg_price": latest["price"],
+                    "avg_price": latest["price"],  # asumsi harga sama dengan terakhir
                     "day_of_week": besok_day,
                     "is_weekend": is_weekend,
                     "sku_encoded": sku_encoded
-                }])
+                }], columns=feature_names)
+                feat = feat.fillna(0)
+
                 yhat = predict_sales(feat)
                 besok_preds.append({"SKU": sku, "Prediksi Besok": round(yhat[0], 2)})
 
