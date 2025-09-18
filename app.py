@@ -1,10 +1,12 @@
+# ======================================
+# === app.py: Vending Machine GUI ===
+# ======================================
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import joblib
 import tensorflow as tf
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 
@@ -17,11 +19,11 @@ rf = joblib.load("RandomForest_model.pkl")
 svm = joblib.load("SVM_model.pkl")
 xgb = joblib.load("XGBoost_model.pkl")
 
-# Load meta LSTM
-lstm_meta = tf.keras.models.load_model("stacking_lstm_meta.h5")
+# Load meta LSTM (tanpa compile)
+lstm_meta = tf.keras.models.load_model("stacking_lstm_meta.h5", compile=False)
 
 # Load scaler
-scaler = joblib.load("saved_models/scaler.pkl")  # pastikan Anda sudah save scaler saat training
+scaler = joblib.load("saved_models/scaler.pkl")  # pastikan scaler disave saat training
 
 # Link Google Sheets (gunakan CSV export)
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1AvzsaiDZqQ_0tR7S3_OYCqwIeTIz3GQ27ptvT4GWk6A/export?format=csv"
@@ -98,7 +100,8 @@ with tab2:
 
     sku = st.text_input("SKU (nama produk)", "Nescafe")
     avg_price = st.number_input("Harga Rata-rata", min_value=1000, max_value=20000, value=10000, step=500)
-    day_of_week = st.selectbox("Hari ke-", list(range(7)), format_func=lambda x: ["Senin","Selasa","Rabu","Kamis","Jumat","Sabtu","Minggu"][x])
+    day_of_week = st.selectbox("Hari ke-", list(range(7)),
+                               format_func=lambda x: ["Senin","Selasa","Rabu","Kamis","Jumat","Sabtu","Minggu"][x])
     is_weekend = 1 if day_of_week >= 5 else 0
     sku_encoded = 0  # untuk sekarang dummy, bisa mapping LabelEncoder
 
@@ -111,4 +114,3 @@ with tab2:
         }])
         pred = predict_sales(input_manual)
         st.success(f"🔮 Prediksi Penjualan (Manual): {pred[0]:.2f} unit")
-
