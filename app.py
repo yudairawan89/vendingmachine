@@ -1,5 +1,5 @@
 # ======================================
-# === app.py: Vending Machine GUI Final ===
+# === app.py: Vending Machine GUI Final All-in-One ===
 # ======================================
 
 import streamlit as st
@@ -59,12 +59,13 @@ def predict_sales(input_df):
 st.set_page_config(page_title="Vending Machine Prediction", layout="wide")
 st.title("🤖 Vending Machine Monitoring & Prediction")
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📡 Monitoring", 
-    "🛒 Prediksi per Produk", 
-    "📊 Prediksi Besok", 
-    "📅 Prediksi Minggu Depan", 
-    "📆 Prediksi Bulan Depan"
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "📡 Monitoring",
+    "🔮 Prediksi per Produk",
+    "📊 Prediksi Besok",
+    "📅 Prediksi Minggu Depan",
+    "📆 Prediksi Bulan Depan",
+    "📂 Prediksi dari File XLSX"
 ])
 
 
@@ -76,8 +77,6 @@ with tab1:
 
     try:
         df = pd.read_csv(SHEET_URL)
-
-        # Parsing timestamp manual (format pakai titik di jam)
         df["timestamp"] = pd.to_datetime(df["timestamp"], format="%Y-%m-%d %H.%M.%S", errors="coerce")
 
         if df["timestamp"].isnull().all():
@@ -92,11 +91,10 @@ with tab1:
 
             st.dataframe(df.tail(10))
 
-            # Mapping SKU pakai LabelEncoder
             try:
                 sku_encoded = le.transform([latest["sku"]])[0]
             except:
-                sku_encoded = 0  # default kalau SKU tidak dikenal
+                sku_encoded = 0
 
             features = pd.DataFrame([{
                 "avg_price": latest["price"],
@@ -113,91 +111,56 @@ with tab1:
 
 
 # -------------------------------
-# Tab 2: Prediksi Per Produk
+# Tab 2: Prediksi per Produk
 # -------------------------------
 with tab2:
-    st.subheader("Prediksi Penjualan per Produk")
+    st.subheader("Prediksi per Produk (Harian, Mingguan, Bulanan)")
 
-    # Dropdown SKU
     sku = st.selectbox("Pilih Produk (SKU)", le.classes_)
     avg_price = st.number_input("Harga Rata-rata", min_value=1000, max_value=20000, value=10000, step=500)
 
-    # Pilih jenis prediksi
-    pred_type = st.radio("Jenis Prediksi", ["Harian", "Mingguan", "Bulanan"])
+    pred_scope = st.radio("Pilih Periode Prediksi", ["Harian", "Mingguan", "Bulanan"])
 
-    if pred_type == "Harian":
-        day_of_week = st.selectbox(
-            "Hari ke-",
-            list(range(7)),
-            format_func=lambda x: ["Senin","Selasa","Rabu","Kamis","Jumat","Sabtu","Minggu"][x]
-        )
-        is_weekend = 1 if day_of_week >= 5 else 0
-    else:
-        day_of_week = pd.Timestamp.today().dayofweek
-        is_weekend = 1 if day_of_week >= 5 else 0
+    day_of_week = pd.Timestamp.today().dayofweek
+    is_weekend = 1 if day_of_week >= 5 else 0
 
     try:
         sku_encoded = le.transform([sku])[0]
     except:
         sku_encoded = 0
 
-    if st.button("Prediksi Penjualan"):
-        if pred_type == "Harian":
-            input_manual = pd.DataFrame([{
-                "avg_price": avg_price,
-                "day_of_week": day_of_week,
-                "is_weekend": is_weekend,
-                "sku_encoded": sku_encoded
-            }])
-            pred = predict_sales(input_manual)
-            st.success(f"🔮 Prediksi Harian {sku}: {pred[0]:.2f} unit")
+    if st.button("Prediksi Penjualan (per Produk)"):
+        features = pd.DataFrame([{
+            "avg_price": avg_price,
+            "day_of_week": day_of_week,
+            "is_weekend": is_weekend,
+            "sku_encoded": sku_encoded
+        }])
+        pred = predict_sales(features)
 
-        elif pred_type == "Mingguan":
-            preds = []
-            for i in range(7):
-                future_day = (pd.Timestamp.today() + pd.Timedelta(days=i+1)).dayofweek
-                is_weekend = 1 if future_day >= 5 else 0
-                features = pd.DataFrame([{
-                    "avg_price": avg_price,
-                    "day_of_week": future_day,
-                    "is_weekend": is_weekend,
-                    "sku_encoded": sku_encoded
-                }])
-                pred = predict_sales(features)
-                preds.append(pred[0])
-            st.info(f"📅 Prediksi Total Mingguan {sku}: {sum(preds):.2f} unit")
+        factor = 1
+        if pred_scope == "Mingguan":
+            factor = 7
+        elif pred_scope == "Bulanan":
+            factor = 30
 
-        elif pred_type == "Bulanan":
-            preds = []
-            for i in range(30):
-                future_day = (pd.Timestamp.today() + pd.Timedelta(days=i+1)).dayofweek
-                is_weekend = 1 if future_day >= 5 else 0
-                features = pd.DataFrame([{
-                    "avg_price": avg_price,
-                    "day_of_week": future_day,
-                    "is_weekend": is_weekend,
-                    "sku_encoded": sku_encoded
-                }])
-                pred = predict_sales(features)
-                preds.append(pred[0])
-            st.info(f"📆 Prediksi Total Bulanan {sku}: {sum(preds):.2f} unit")
+        st.success(f"🔮 Prediksi {pred_scope} untuk {sku}: {pred[0] * factor:.2f} unit")
 
 
 # -------------------------------
-# Tab 3: Prediksi Besok per SKU
+# Tab 3: Prediksi Besok (semua SKU)
 # -------------------------------
 with tab3:
     st.subheader("Prediksi Penjualan Besok untuk Setiap SKU")
-    st.caption("Silakan masukkan data penjualan *hari ini* untuk setiap SKU. Sistem akan pakai ini sebagai lag_1 untuk prediksi besok.")
 
     skus = le.classes_
     input_today = {}
     for sku in skus:
         c1, c2 = st.columns(2)
         with c1:
-            price = st.number_input(f"Harga {sku}", min_value=1000, max_value=20000, value=10000, step=500)
+            price = st.number_input(f"Harga {sku}", min_value=1000, max_value=20000, value=10000, step=500, key=f"price_{sku}_besok")
         with c2:
-            sold = st.number_input(f"Penjualan Hari Ini {sku}", min_value=0, max_value=100, value=1, step=1)
+            sold = st.number_input(f"Penjualan Hari Ini {sku}", min_value=0, max_value=100, value=1, step=1, key=f"sold_{sku}_besok")
         input_today[sku] = {"price": price, "sold": sold}
 
     if st.button("Prediksi Besok"):
@@ -214,85 +177,134 @@ with tab3:
                 "day_of_week": tomorrow.dayofweek,
                 "is_weekend": 1 if tomorrow.dayofweek >= 5 else 0,
                 "sku_encoded": sku_encoded,
-                "lag_1": vals["sold"],
-                "lag_2": vals["sold"],
-                "lag_3": vals["sold"],
-                "lag_7": vals["sold"],
-                "lag_14": vals["sold"],
-                "rolling_mean_3": vals["sold"],
-                "rolling_mean_7": vals["sold"],
-                "rolling_mean_14": vals["sold"],
-                "rolling_std_3": 0,
-                "rolling_std_7": 0,
-                "rolling_std_14": 0,
-                "total_demand_day": vals["sold"],
-                "sku_share": 1.0
+                "lag_1": vals["sold"]
             }])
 
             pred = predict_sales(features)
             preds.append({"SKU": sku, "Prediksi Besok": round(float(pred[0]), 2)})
 
-        result_df = pd.DataFrame(preds)
-        st.table(result_df)
+        st.table(pd.DataFrame(preds))
 
 
 # -------------------------------
 # Tab 4: Prediksi Minggu Depan
 # -------------------------------
 with tab4:
-    st.subheader("Prediksi Minggu Depan untuk Setiap SKU")
+    st.subheader("Prediksi Penjualan Minggu Depan (7 Hari ke Depan)")
 
     skus = le.classes_
-    preds = []
+    input_today = {}
     for sku in skus:
-        try:
-            sku_encoded = le.transform([sku])[0]
-        except:
-            sku_encoded = 0
-        total_week = 0
-        for i in range(7):
-            future_day = (pd.Timestamp.today() + pd.Timedelta(days=i+1)).dayofweek
-            is_weekend = 1 if future_day >= 5 else 0
-            features = pd.DataFrame([{
-                "avg_price": 10000,
-                "day_of_week": future_day,
-                "is_weekend": is_weekend,
-                "sku_encoded": sku_encoded
-            }])
-            pred = predict_sales(features)
-            total_week += pred[0]
-        preds.append({"SKU": sku, "Prediksi Mingguan": round(float(total_week), 2)})
+        c1, c2 = st.columns(2)
+        with c1:
+            price = st.number_input(f"Harga {sku}", min_value=1000, max_value=20000, value=10000, step=500, key=f"price_{sku}_minggu")
+        with c2:
+            sold = st.number_input(f"Penjualan Hari Ini {sku}", min_value=0, max_value=100, value=1, step=1, key=f"sold_{sku}_minggu")
+        input_today[sku] = {"price": price, "sold": sold}
 
-    result_df = pd.DataFrame(preds)
-    st.table(result_df)
+    if st.button("Prediksi Minggu Depan"):
+        preds = []
+        for sku, vals in input_today.items():
+            try:
+                sku_encoded = le.transform([sku])[0]
+            except:
+                sku_encoded = 0
+
+            features = pd.DataFrame([{
+                "avg_price": vals["price"],
+                "day_of_week": pd.Timestamp.today().dayofweek,
+                "is_weekend": 1 if pd.Timestamp.today().dayofweek >= 5 else 0,
+                "sku_encoded": sku_encoded,
+                "lag_1": vals["sold"]
+            }])
+
+            pred = predict_sales(features)
+            preds.append({"SKU": sku, "Prediksi Mingguan": round(float(pred[0] * 7), 2)})
+
+        st.table(pd.DataFrame(preds))
 
 
 # -------------------------------
 # Tab 5: Prediksi Bulan Depan
 # -------------------------------
 with tab5:
-    st.subheader("Prediksi Bulan Depan untuk Setiap SKU")
+    st.subheader("Prediksi Penjualan Bulan Depan (30 Hari ke Depan)")
 
     skus = le.classes_
-    preds = []
+    input_today = {}
     for sku in skus:
-        try:
-            sku_encoded = le.transform([sku])[0]
-        except:
-            sku_encoded = 0
-        total_month = 0
-        for i in range(30):
-            future_day = (pd.Timestamp.today() + pd.Timedelta(days=i+1)).dayofweek
-            is_weekend = 1 if future_day >= 5 else 0
-            features = pd.DataFrame([{
-                "avg_price": 10000,
-                "day_of_week": future_day,
-                "is_weekend": is_weekend,
-                "sku_encoded": sku_encoded
-            }])
-            pred = predict_sales(features)
-            total_month += pred[0]
-        preds.append({"SKU": sku, "Prediksi Bulanan": round(float(total_month), 2)})
+        c1, c2 = st.columns(2)
+        with c1:
+            price = st.number_input(f"Harga {sku}", min_value=1000, max_value=20000, value=10000, step=500, key=f"price_{sku}_bulan")
+        with c2:
+            sold = st.number_input(f"Penjualan Hari Ini {sku}", min_value=0, max_value=100, value=1, step=1, key=f"sold_{sku}_bulan")
+        input_today[sku] = {"price": price, "sold": sold}
 
-    result_df = pd.DataFrame(preds)
-    st.table(result_df)
+    if st.button("Prediksi Bulan Depan"):
+        preds = []
+        for sku, vals in input_today.items():
+            try:
+                sku_encoded = le.transform([sku])[0]
+            except:
+                sku_encoded = 0
+
+            features = pd.DataFrame([{
+                "avg_price": vals["price"],
+                "day_of_week": pd.Timestamp.today().dayofweek,
+                "is_weekend": 1 if pd.Timestamp.today().dayofweek >= 5 else 0,
+                "sku_encoded": sku_encoded,
+                "lag_1": vals["sold"]
+            }])
+
+            pred = predict_sales(features)
+            preds.append({"SKU": sku, "Prediksi Bulanan": round(float(pred[0] * 30), 2)})
+
+        st.table(pd.DataFrame(preds))
+
+
+# -------------------------------
+# Tab 6: Prediksi dari File XLSX
+# -------------------------------
+with tab6:
+    st.subheader("📂 Upload File XLSX untuk Prediksi")
+
+    uploaded_file = st.file_uploader("Upload file Excel (.xlsx)", type=["xlsx"])
+
+    if uploaded_file:
+        try:
+            df = pd.read_excel(uploaded_file, engine="openpyxl")
+            st.success("✅ File berhasil dibaca")
+            st.dataframe(df.head())
+
+            mode = st.radio("Pilih Mode Prediksi", ["Harian", "Mingguan", "Bulanan"])
+
+            preds = []
+            tomorrow = pd.Timestamp.today() + pd.Timedelta(days=1)
+
+            for _, row in df.iterrows():
+                try:
+                    sku_encoded = le.transform([row["sku"]])[0]
+                except:
+                    sku_encoded = 0
+
+                features = pd.DataFrame([{
+                    "avg_price": row["price"],
+                    "day_of_week": tomorrow.dayofweek,
+                    "is_weekend": 1 if tomorrow.dayofweek >= 5 else 0,
+                    "sku_encoded": sku_encoded,
+                    "lag_1": row["sold"]
+                }])
+
+                pred = predict_sales(features)
+                factor = 1
+                if mode == "Mingguan":
+                    factor = 7
+                elif mode == "Bulanan":
+                    factor = 30
+
+                preds.append({"SKU": row["sku"], f"Prediksi {mode}": round(float(pred[0] * factor), 2)})
+
+            st.table(pd.DataFrame(preds))
+
+        except Exception as e:
+            st.error(f"Gagal membaca file: {e}")
