@@ -1,5 +1,5 @@
 # ======================================
-# === app.py: Vending Machine GUI Final All-in-One ===
+# === app.py: Vending Machine GUI Final All-in-One (Monitoring Fresh) ===
 # ======================================
 
 import streamlit as st
@@ -27,13 +27,13 @@ feature_names = joblib.load("feature_names.pkl")
 
 # Link Google Sheets (gunakan CSV export)
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1AvzsaiDZqQ_0tR7S3_OYCqwIeTIz3GQ27ptvT4GWk6A/export?format=csv"
+SHEET_VIEW_URL = "https://docs.google.com/spreadsheets/d/1AvzsaiDZqQ_0tR7S3_OYCqwIeTIz3GQ27ptvT4GWk6A/edit"
 
 
 # ======================================
 # === STEP 2: Fungsi Prediksi ===
 # ======================================
 def predict_sales(input_df):
-    # Pastikan kolom sama dengan feature_names
     for col in feature_names:
         if col not in input_df.columns:
             input_df[col] = 0
@@ -70,41 +70,67 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 
 
 # -------------------------------
-# Tab 1: Monitoring
+# Tab 1: Monitoring (Fresh)
 # -------------------------------
 with tab1:
-    st.subheader("Data Monitoring dari Google Sheet")
+    st.subheader("📡 Monitoring Harian")
 
     try:
         df = pd.read_csv(SHEET_URL)
         df["timestamp"] = pd.to_datetime(df["timestamp"], format="%Y-%m-%d %H.%M.%S", errors="coerce")
 
         if df["timestamp"].isnull().all():
-            st.warning("⚠️ Data ada, tapi kolom timestamp kosong/tidak valid.")
+            st.warning("⚠️ Data ada, tapi timestamp tidak valid.")
         else:
-            latest = df.sort_values("timestamp").iloc[-1]
+            today = pd.Timestamp.today().date()
+            df_today = df[df["timestamp"].dt.date == today]
 
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Suhu (°C)", f"{latest['temperature_c']}")
-            col2.metric("Kelembaban (%)", f"{latest['humidity']}")
-            col3.metric("SKU", latest['sku'])
+            if df_today.empty:
+                st.warning("⚠️ Tidak ada data penjualan untuk hari ini.")
+            else:
+                # Info suhu & kelembaban terakhir
+                latest = df_today.sort_values("timestamp").iloc[-1]
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.metric("🌡️ Suhu (°C)", f"{latest['temperature_c']}")
+                with c2:
+                    st.metric("💧 Kelembaban (%)", f"{latest['humidity']}")
 
-            st.dataframe(df.tail(10))
+                # Agregasi penjualan per SKU
+                sales_today = df_today.groupby("sku")["sold"].sum().reset_index()
+                preds = []
+                tomorrow = pd.Timestamp.today() + pd.Timedelta(days=1)
 
-            try:
-                sku_encoded = le.transform([latest["sku"]])[0]
-            except:
-                sku_encoded = 0
+                for _, row in sales_today.iterrows():
+                    try:
+                        sku_encoded = le.transform([row["sku"]])[0]
+                    except:
+                        sku_encoded = 0
 
-            features = pd.DataFrame([{
-                "avg_price": latest["price"],
-                "day_of_week": latest["timestamp"].dayofweek,
-                "is_weekend": 1 if latest["timestamp"].dayofweek >= 5 else 0,
-                "sku_encoded": sku_encoded
-            }])
+                    features = pd.DataFrame([{
+                        "avg_price": df_today[df_today["sku"] == row["sku"]]["price"].mean(),
+                        "day_of_week": tomorrow.dayofweek,
+                        "is_weekend": 1 if tomorrow.dayofweek >= 5 else 0,
+                        "sku_encoded": sku_encoded,
+                        "lag_1": row["sold"]
+                    }])
 
-            pred = predict_sales(features)
-            st.success(f"🔮 Prediksi Penjualan: {pred[0]:.2f} unit")
+                    pred = predict_sales(features)
+                    preds.append({
+                        "SKU": row["sku"],
+                        "Terjual Hari Ini": int(row["sold"]),
+                        "Prediksi Besok": round(float(pred[0]), 2)
+                    })
+
+                st.markdown("### 📊 Ringkasan Penjualan Harian & Prediksi Besok")
+                st.dataframe(pd.DataFrame(preds), use_container_width=True)
+
+                st.markdown(
+                    f"<a href='{SHEET_VIEW_URL}' target='_blank'>"
+                    "<button style='background-color:#4CAF50; color:white; padding:10px 20px; border:none; border-radius:5px;'>"
+                    "📂 Database Penjualan</button></a>",
+                    unsafe_allow_html=True
+                )
 
     except Exception as e:
         st.error(f"Gagal mengambil data Google Sheet: {e}")
